@@ -1,0 +1,19 @@
+{
+  "name": "sandform-hand-tracking",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Interactive 3D sand particle system with hand gesture tracking",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.8",
+    "three": "^0.168.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

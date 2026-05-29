@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SandForm — Hand Tracking</title>
+<link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- Loading overlay -->
+  <div id="loading-overlay">
+    <div class="loader-content">
+      <div class="loader-ring"></div>
+      <p class="loader-title">SANDFORM</p>
+      <p class="loader-sub">Initializing hand tracking...</p>
+    </div>
+  </div>
+
+  <!-- UI Info Panel -->
+  <div id="ui-panel">
+    <div class="brand">✦ SANDFORM</div>
+    <div class="gesture-display">
+      <span class="gesture-label">GESTURE</span>
+      <span id="gesture-name">—</span>
+    </div>
+  </div>
+
+  <!-- Gesture Guide — icon sesuai bentuk tangan -->
+  <div id="gesture-guide">
+    <div class="guide-title">GESTURES</div>
+    <div class="guide-items">
+
+      <!-- Open Palm → Sphere -->
+      <div class="guide-item" data-gesture="open_palm">
+        <svg class="gesture-icon" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Palm telapak -->
+          <rect x="7" y="20" width="18" height="15" rx="4" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Jari-jari terbuka: telunjuk, tengah, manis, kelingking -->
+          <rect x="8"  y="6"  width="4" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="13" y="4"  width="4" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="18" y="5"  width="4" height="17" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="23" y="8"  width="3.5" height="14" rx="1.75" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Ibu jari -->
+          <rect x="2"  y="15" width="7"  height="3.5" rx="1.75" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        <span class="gesture-desc">Open Palm → Sphere</span>
+      </div>
+
+      <!-- Fist → Cube -->
+      <div class="guide-item" data-gesture="fist">
+        <svg class="gesture-icon" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Kepalan tangan / fist -->
+          <rect x="5" y="14" width="22" height="20" rx="5" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Knuckle lines -->
+          <line x1="10" y1="14" x2="10" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="16" y1="14" x2="16" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="22" y1="14" x2="22" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Ibu jari di samping -->
+          <path d="M5 20 Q2 18 3 15 Q4 12 7 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        </svg>
+        <span class="gesture-desc">Fist → Cube</span>
+      </div>
+
+      <!-- Pinch → Heart -->
+      <div class="guide-item" data-gesture="pinch">
+        <svg class="gesture-icon" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Ibu jari dan telunjuk menyentuh (pinch) -->
+          <!-- Ibu jari -->
+          <path d="M8 28 L8 20 Q8 14 12 12 L15 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          <!-- Telunjuk melengkung ke bawah bertemu ibu jari -->
+          <path d="M20 6 L20 14 Q20 20 16 22 L15 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          <!-- Titik pertemuan pinch -->
+          <circle cx="14.5" cy="21" r="2" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Jari lain melipat (tampak sebagai busur) -->
+          <path d="M22 8 Q24 16 23 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.5"/>
+          <path d="M24 9 Q27 17 26 26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.3"/>
+          <!-- Palm bawah -->
+          <path d="M8 28 Q8 34 16 35 Q24 34 24 28" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        </svg>
+        <span class="gesture-desc">Pinch → Heart</span>
+      </div>
+
+      <!-- Peace → Saturn -->
+      <div class="guide-item" data-gesture="peace">
+        <svg class="gesture-icon" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Palm -->
+          <rect x="8" y="22" width="16" height="14" rx="4" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Telunjuk berdiri -->
+          <rect x="10" y="6"  width="4" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Jari tengah berdiri -->
+          <rect x="15" y="5"  width="4" height="19" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Jari manis melipat (pendek) -->
+          <path d="M20 22 Q21 16 20 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.4"/>
+          <!-- Kelingking melipat -->
+          <path d="M21 23 Q23 17 22 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.3"/>
+          <!-- Ibu jari -->
+          <path d="M8 25 Q5 23 6 20 L8 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        </svg>
+        <span class="gesture-desc">Peace → Saturn</span>
+      </div>
+
+      <!-- Pointing → Double Helix -->
+      <div class="guide-item" data-gesture="pointing">
+        <svg class="gesture-icon" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Palm -->
+          <rect x="8" y="22" width="16" height="14" rx="4" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Hanya telunjuk berdiri lurus -->
+          <rect x="12" y="4" width="5" height="20" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Jari lain melipat (tampak sebagai bumps kecil) -->
+          <path d="M18 22 Q20 16 19 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.4"/>
+          <path d="M20 23 Q22 17 21 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.3"/>
+          <path d="M21 23 Q24 19 23 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.25"/>
+          <!-- Ibu jari -->
+          <path d="M8 25 Q5 23 6 20 L8 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        </svg>
+        <span class="gesture-desc">Point → Helix</span>
+      </div>
+
+      <!-- Thumbs Up → Diamond -->
+      <div class="guide-item" data-gesture="thumbs_up">
+        <svg class="gesture-icon" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Kepalan bawah (jari melipat) -->
+          <rect x="7" y="22" width="19" height="14" rx="5" stroke="currentColor" stroke-width="1.5"/>
+          <!-- Knuckle lines -->
+          <line x1="12" y1="22" x2="12" y2="25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="17" y1="22" x2="17" y2="25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="22" y1="22" x2="22" y2="25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Ibu jari tegak lurus ke atas -->
+          <rect x="10" y="6"  width="5" height="18" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        <span class="gesture-desc">Thumbs Up → Diamond</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Webcam (hidden) -->
+  <video id="webcam" autoplay playsinline muted></video>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
