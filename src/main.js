@@ -12,20 +12,24 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 
 const PARTICLE_COUNT = 6500;
 
-const POSITION_LERP = 0.09;
-const COLOR_LERP    = 0.05;
-const MORPH_LERP    = 0.08;
-const CAMERA_LERP   = 0.03;
-const SCALE_LERP    = 0.07;
-const ROTATION_DAMP = 0.92;
+const HAND_FILTER    = 0.22;
+const POS_STIFFNESS  = 0.13;
+const POS_DAMP       = 0.78;
+const COLOR_LERP     = 0.038;
+const MORPH_STIFF    = 0.042;
+const MORPH_DAMP     = 0.76;
+const CAMERA_LERP    = 0.028;
+const SCALE_LERP     = 0.055;
+const ROTATION_DAMP  = 0.9;
+const TARGET_DEADZONE = 0.018;
 
 const GESTURE_CONFIG = {
-  open_palm:  { name: 'Sphere',   color: new THREE.Color(0x33bbff), shape: 'sphere'  },
-  fist:       { name: 'Cube',     color: new THREE.Color(0xff5522), shape: 'cube'    },
-  pinch:      { name: 'Heart',    color: new THREE.Color(0xff2d9b), shape: 'heart'   },
-  peace:      { name: 'Saturn',   color: new THREE.Color(0xaa77ff), shape: 'saturn'  },
-  pointing:   { name: 'Helix',    color: new THREE.Color(0x00e8ff), shape: 'helix'   },
-  thumbs_up:  { name: 'Diamond',  color: new THREE.Color(0xffcc33), shape: 'diamond' },
+  open_palm:  { name: 'Sphere',   color: new THREE.Color(0x8eb8ff), shape: 'sphere'  },
+  fist:       { name: 'Cube',     color: new THREE.Color(0xff9a78), shape: 'cube'    },
+  pinch:      { name: 'Heart',    color: new THREE.Color(0xf3a8c8), shape: 'heart'   },
+  peace:      { name: 'Saturn',   color: new THREE.Color(0xc4b0ff), shape: 'saturn'  },
+  pointing:   { name: 'Helix',    color: new THREE.Color(0x8fd6c8), shape: 'helix'   },
+  thumbs_up:  { name: 'Diamond',  color: new THREE.Color(0xffd89a), shape: 'diamond' },
 };
 
 const viewport = {
@@ -88,13 +92,13 @@ updateViewportMetrics();
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x030508, 1);
+renderer.setClearColor(0x14161f, 1);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.98;
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x030508, 0.014);
+scene.fog = new THREE.FogExp2(0x14161f, 0.012);
 
 const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(0, 0, viewport.cameraZ);
@@ -102,17 +106,17 @@ camera.position.set(0, 0, viewport.cameraZ);
 const cameraTarget = new THREE.Vector3(0, 0, viewport.cameraZ);
 const cameraLookAt = new THREE.Vector3(0, 0, 0);
 
-scene.add(new THREE.AmbientLight(0x1a2a4a, 1.2));
+scene.add(new THREE.AmbientLight(0xc8b8d8, 0.85));
 
-const pointLight1 = new THREE.PointLight(0x00aaff, 5, 20);
+const pointLight1 = new THREE.PointLight(0x8eb8ff, 3.8, 20);
 pointLight1.position.set(3, 3, 3);
 scene.add(pointLight1);
 
-const pointLight2 = new THREE.PointLight(0xff4400, 3.5, 15);
+const pointLight2 = new THREE.PointLight(0xf3a8c8, 2.6, 15);
 pointLight2.position.set(-3, -2, 2);
 scene.add(pointLight2);
 
-const rimLight = new THREE.PointLight(0xffffff, 2.5, 25);
+const rimLight = new THREE.PointLight(0xfff5fb, 1.8, 25);
 rimLight.position.set(0, 0, -5);
 scene.add(rimLight);
 
@@ -123,6 +127,7 @@ scene.add(rimLight);
 const geometry = new THREE.BufferGeometry();
 const positions       = new Float32Array(PARTICLE_COUNT * 3);
 const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+const morphVelocity   = new Float32Array(PARTICLE_COUNT * 3);
 const colors          = new Float32Array(PARTICLE_COUNT * 3);
 const randomSeeds     = new Float32Array(PARTICLE_COUNT * 3);
 const helixPhases     = new Float32Array(PARTICLE_COUNT);
@@ -145,7 +150,7 @@ const material = new THREE.PointsMaterial({
   size: viewport.particleSize,
   vertexColors: true,
   transparent: true,
-  opacity: 0.9,
+  opacity: 0.86,
   sizeAttenuation: true,
   blending: THREE.AdditiveBlending,
   depthWrite: false,
@@ -171,7 +176,7 @@ ambientGeometry.setAttribute('position', new THREE.BufferAttribute(ambientPositi
 const ambientParticles = new THREE.Points(
   ambientGeometry,
   new THREE.PointsMaterial({
-    size: 0.014, color: 0x3366aa, transparent: true, opacity: 0.18,
+    size: 0.014, color: 0xc4b0ff, transparent: true, opacity: 0.16,
     sizeAttenuation: true, blending: THREE.AdditiveBlending,
   })
 );
@@ -182,222 +187,300 @@ scene.add(ambientParticles);
 // ────────────────────────────────────────────────────────────
 
 const S = () => viewport.shapeScale;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+function push(pos, x, y, z) { pos.push(x, y, z); }
+
+function padToCount(pos, count) {
+  const have = Math.floor(pos.length / 3);
+  if (have === 0) return pos;
+  while (pos.length / 3 < count) {
+    const i = (Math.floor(pos.length / 3) % have) * 3;
+    push(pos, pos[i], pos[i + 1], pos[i + 2]);
+  }
+  return pos.slice(0, count * 3);
+}
+
+function addFibonacciSphere(pos, count, radius) {
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (i / Math.max(1, count - 1)) * 2;
+    const rAtY = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = GOLDEN_ANGLE * i;
+    push(pos, radius * Math.cos(theta) * rAtY, radius * y, radius * Math.sin(theta) * rAtY);
+  }
+}
+
+function addCircle(pos, count, radius, y, tiltX = 0) {
+  const c = Math.cos(tiltX);
+  const s = Math.sin(tiltX);
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    const x = radius * Math.cos(a);
+    const z = radius * Math.sin(a);
+    push(pos, x, y * c - z * s, y * s + z * c);
+  }
+}
+
+function addEdge(pos, a, b, n) {
+  for (let i = 0; i < n; i++) {
+    const u = n === 1 ? 0.5 : i / (n - 1);
+    const t = 0.5 - 0.5 * Math.cos(u * Math.PI);
+    push(pos,
+      a[0] + (b[0] - a[0]) * t,
+      a[1] + (b[1] - a[1]) * t,
+      a[2] + (b[2] - a[2]) * t
+    );
+  }
+}
 
 function heartCurve2D(t) {
   const sinT = Math.sin(t);
   return [
-    Math.pow(sinT, 3),
-    (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16,
+    16 * Math.pow(sinT, 3),
+    13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t),
   ];
 }
 
-function push(pos, x, y, z) { pos.push(x, y, z); }
+function heartSamples(n) {
+  const steps = n * 8;
+  let length = 0;
+  let prev = heartCurve2D(0);
+  const pts = [{ t: 0, x: prev[0], y: prev[1], len: 0 }];
+  for (let i = 1; i <= steps; i++) {
+    const t = (i / steps) * Math.PI * 2;
+    const [x, y] = heartCurve2D(t);
+    length += Math.hypot(x - prev[0], y - prev[1]);
+    pts.push({ t, x, y, len: length });
+    prev = [x, y];
+  }
+  const out = [];
+  let j = 1;
+  for (let i = 0; i < n; i++) {
+    const target = (i / n) * length;
+    while (j < pts.length && pts[j].len < target) j++;
+    const a = pts[j - 1];
+    const b = pts[Math.min(j, pts.length - 1)];
+    const span = b.len - a.len || 1;
+    const f = (target - a.len) / span;
+    out.push([a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f]);
+  }
+  return out;
+}
 
 // ────────────────────────────────────────────────────────────
 //  5. SHAPE GENERATORS
 // ────────────────────────────────────────────────────────────
 
-function generateSphere(count, radius = 1.65 * S()) {
+function generateSphere(count) {
   const pos = [];
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < count; i++) {
-    const y = 1 - (i / (count - 1)) * 2;
-    const rAtY = Math.sqrt(Math.max(0, 1 - y * y));
-    const theta = golden * i;
-    const r = radius * (0.996 + (i % 4) * 0.001);
-    push(pos, r * Math.cos(theta) * rAtY, r * y, r * Math.sin(theta) * rAtY);
+  const radius = 1.62 * S();
+  const ringShare = Math.floor(count * 0.18);
+  const shellCount = count - ringShare;
+  addFibonacciSphere(pos, shellCount, radius);
+
+  const rings = 4;
+  const perRing = Math.floor(ringShare / rings);
+  const lats = [-0.62, -0.22, 0.22, 0.62];
+  for (let r = 0; r < rings; r++) {
+    const y = lats[r] * radius;
+    const ringR = Math.sqrt(Math.max(0, radius * radius - y * y));
+    addCircle(pos, perRing, ringR, y, 0);
   }
-  return pos;
+  return padToCount(pos, count);
 }
 
-function generateCube(count, half = 1.45 * S()) {
+function generateCube(count) {
   const pos = [];
-  const edges = [
-    (t) => [half * (2 * t - 1), -half, -half], (t) => [half * (2 * t - 1), -half, half],
-    (t) => [-half, -half, half * (2 * t - 1)], (t) => [half, -half, half * (2 * t - 1)],
-    (t) => [half * (2 * t - 1), half, -half], (t) => [half * (2 * t - 1), half, half],
-    (t) => [-half, half, half * (2 * t - 1)], (t) => [half, half, half * (2 * t - 1)],
-    (t) => [-half, half * (2 * t - 1), -half], (t) => [half, half * (2 * t - 1), -half],
-    (t) => [-half, half * (2 * t - 1), half], (t) => [half, half * (2 * t - 1), half],
+  const half = 1.38 * S();
+  const corners = [
+    [-half, -half, -half], [half, -half, -half], [half, -half, half], [-half, -half, half],
+    [-half,  half, -half], [half,  half, -half], [half,  half, half], [-half,  half, half],
   ];
-  const cornerCount = Math.floor(count * 0.1);
-  const perEdge = Math.floor((count - cornerCount) / edges.length);
-  const jitter = 0.01 * S();
+  const edges = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
 
-  for (const edgeFn of edges) {
-    for (let i = 0; i < perEdge; i++) {
-      const t = i / Math.max(1, perEdge - 1);
-      const p = edgeFn(t);
-      push(pos, p[0] + (Math.random() - 0.5) * jitter, p[1] + (Math.random() - 0.5) * jitter, p[2] + (Math.random() - 0.5) * jitter);
-    }
+  const cornerCount = Math.floor(count * 0.08);
+  const perCorner = Math.floor(cornerCount / 8);
+  const perEdge = Math.floor((count - perCorner * 8) / edges.length);
+
+  for (const [ia, ib] of edges) addEdge(pos, corners[ia], corners[ib], perEdge);
+  for (const c of corners) {
+    for (let i = 0; i < perCorner; i++) push(pos, c[0], c[1], c[2]);
   }
-  const corners = [[-1,-1,-1],[1,-1,-1],[-1,-1,1],[1,-1,1],[-1,1,-1],[1,1,-1],[-1,1,1],[1,1,1]];
-  for (let i = 0; i < cornerCount; i++) {
-    const c = corners[i % 8];
-    push(pos, c[0] * half, c[1] * half, c[2] * half);
-  }
-  return pos.slice(0, count * 3);
+  return padToCount(pos, count);
 }
 
-function generateHeart(count, scale = 1.45 * S()) {
+function generateHeart(count) {
   const pos = [];
-  const outlineCount = Math.floor(count * 0.75);
-  const layerCount = Math.floor(count * 0.15);
-  const fillCount = count - outlineCount - layerCount;
-  const norm = scale * 0.92;
-  const yOffset = -0.1 * scale;
+  const scale = 0.092 * S();
+  const samples = heartSamples(Math.max(240, Math.floor(count * 0.12)));
+  let cx = 0, cy = 0;
+  for (const [x, y] of samples) { cx += x; cy += y; }
+  cx /= samples.length;
+  cy /= samples.length;
 
-  for (let i = 0; i < outlineCount; i++) {
-    const t = (i / outlineCount) * Math.PI * 2;
-    const [hx, hy] = heartCurve2D(t);
-    const layer = [-0.12, 0, 0.12][i % 3];
-    const d = Math.sqrt(Math.max(0.25, 1 - layer * layer * 2));
-    push(pos, hx * norm * d, hy * norm * d + yOffset, layer * norm * 0.32);
+  const outlineLayers = [
+    { inset: 1.00, z: 0.00, n: 0.42 },
+    { inset: 0.94, z:  0.09, n: 0.14 },
+    { inset: 0.94, z: -0.09, n: 0.14 },
+    { inset: 0.86, z:  0.16, n: 0.08 },
+    { inset: 0.86, z: -0.16, n: 0.08 },
+  ];
+
+  let used = 0;
+  for (const layer of outlineLayers) {
+    const n = Math.floor(count * layer.n);
+    const pts = heartSamples(n);
+    for (const [x, y] of pts) {
+      push(
+        pos,
+        (x - cx) * scale * layer.inset,
+        (y - cy) * scale * layer.inset,
+        layer.z * S()
+      );
+    }
+    used += n;
   }
-  for (let i = 0; i < layerCount; i++) {
-    const t = (i / layerCount) * Math.PI * 2;
-    const [hx, hy] = heartCurve2D(t);
-    push(pos, hx * norm * 0.84, hy * norm * 0.84 + yOffset, Math.sin(t * 2) * 0.07 * norm);
-  }
+
+  const fillCount = count - used;
+  const fillPts = heartSamples(fillCount);
   for (let i = 0; i < fillCount; i++) {
-    const t = (i / fillCount) * Math.PI * 2;
-    const [hx, hy] = heartCurve2D(t);
-    const r = 0.4 + (i % 6) / 6 * 0.4;
-    push(pos, hx * norm * r, hy * norm * r + yOffset, 0);
+    const inset = 0.28 + (i % 8) / 8 * 0.52;
+    const z = ((i % 5) - 2) * 0.028 * S();
+    push(
+      pos,
+      (fillPts[i][0] - cx) * scale * inset,
+      (fillPts[i][1] - cy) * scale * inset,
+      z
+    );
   }
-  return pos.slice(0, count * 3);
+  return padToCount(pos, count);
 }
 
-/**
- * Saturn — solid planet sphere + dense tilted ring with depth bands
- */
 function generateSaturn(count) {
   const pos = [];
-  const planetR = 0.82 * S();
-  const ringInner = 1.18 * S();
-  const ringMid = 1.55 * S();
-  const ringOuter = 2.05 * S();
-  const tilt = (27 * Math.PI) / 180;
-  const cosT = Math.cos(tilt);
-  const sinT = Math.sin(tilt);
+  const planetR = 0.78 * S();
+  const tilt = (26 * Math.PI) / 180;
+  const planetCount = Math.floor(count * 0.28);
+  addFibonacciSphere(pos, planetCount, planetR);
 
-  const planetCount = Math.floor(count * 0.26);
   const ringCount = count - planetCount;
+  const bands = [
+    { inner: 1.12 * S(), outer: 1.48 * S(), share: 0.46 },
+    { inner: 1.62 * S(), outer: 2.02 * S(), share: 0.54 },
+  ];
 
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < planetCount; i++) {
-    const y = 1 - (i / Math.max(1, planetCount - 1)) * 2;
-    const rAtY = Math.sqrt(Math.max(0, 1 - y * y));
-    const theta = golden * i;
-    const r = planetR * (0.997 + (i % 3) * 0.002);
-    push(pos, r * Math.cos(theta) * rAtY, r * y, r * Math.sin(theta) * rAtY);
+  for (const band of bands) {
+    const n = Math.floor(ringCount * band.share);
+    const rings = 7;
+    const perRing = Math.floor(n / rings);
+    for (let r = 0; r < rings; r++) {
+      const t = r / Math.max(1, rings - 1);
+      const radius = band.inner + t * (band.outer - band.inner);
+      addCircle(pos, perRing, radius, 0, tilt);
+    }
   }
-
-  const innerBand = Math.floor(ringCount * 0.12);
-  const mainBand = Math.floor(ringCount * 0.76);
-  const outerBand = ringCount - innerBand - mainBand;
-
-  function addRingParticle(angle, radius, bandIdx) {
-    const thickness =
-      bandIdx === 0 ? 0.008 * S() :
-      bandIdx === 1 ? 0.028 * S() : 0.014 * S();
-    const layer = (bandIdx + (Math.floor(angle * 40) % 3)) * 0.003 * S();
-    const x = radius * Math.cos(angle);
-    const z = radius * Math.sin(angle);
-    const yLocal = (Math.random() - 0.5) * thickness + layer;
-    push(pos, x, yLocal * cosT - z * sinT * 0.02, z * cosT + yLocal * sinT);
-  }
-
-  for (let i = 0; i < innerBand; i++) {
-    const angle = (i / innerBand) * Math.PI * 2;
-    const radius = ringInner + (i / innerBand) * (ringMid - ringInner) * 0.3;
-    addRingParticle(angle, radius, 0);
-  }
-
-  for (let i = 0; i < mainBand; i++) {
-    const angle = (i / mainBand) * Math.PI * 2;
-    const t = i / mainBand;
-    const radius = ringInner + t * (ringOuter - ringInner);
-    addRingParticle(angle, radius, 1);
-    if (i % 2 === 0) addRingParticle(angle + 0.04, radius * 0.998, 1);
-  }
-
-  for (let i = 0; i < outerBand; i++) {
-    const angle = (i / outerBand) * Math.PI * 2;
-    const radius = ringMid + (i / outerBand) * (ringOuter - ringMid);
-    addRingParticle(angle, radius, 2);
-  }
-
-  return pos.slice(0, count * 3);
+  return padToCount(pos, count);
 }
 
-function generateDoubleHelix(count, radius = 0.78 * S(), height = 2.9 * S(), turns = 4.2, tubeR = 0.12 * S()) {
+function generateDoubleHelix(count) {
   const pos = [];
-  const samplesPerPoint = 4;
-  const strandBudget = Math.floor(count * 0.9);
-  const pointsPerStrand = Math.floor(strandBudget / 2 / samplesPerPoint);
+  const radius = 0.72 * S();
+  const height = 2.85 * S();
+  const turns = 3.5;
+  const tubeR = 0.13 * S();
+  const tubeSides = 8;
+  const strandShare = Math.floor(count * 0.86);
+  const steps = Math.floor(strandShare / (2 * tubeSides));
 
   for (let strand = 0; strand < 2; strand++) {
     const phase = strand * Math.PI;
-    for (let i = 0; i < pointsPerStrand; i++) {
-      const t = i / Math.max(1, pointsPerStrand - 1);
+    for (let i = 0; i < steps; i++) {
+      const t = i / Math.max(1, steps - 1);
       const angle = t * Math.PI * 2 * turns + phase;
       const y = (t - 0.5) * height;
       const cx = radius * Math.cos(angle);
       const cz = radius * Math.sin(angle);
-      for (let s = 0; s < samplesPerPoint; s++) {
-        const ta = (s / samplesPerPoint) * Math.PI * 2;
-        push(pos, cx + tubeR * Math.cos(ta), y, cz + tubeR * Math.sin(ta));
+      const nx = Math.cos(angle);
+      const nz = Math.sin(angle);
+      for (let s = 0; s < tubeSides; s++) {
+        const ta = (s / tubeSides) * Math.PI * 2;
+        const ox = tubeR * (Math.cos(ta) * nx);
+        const oy = tubeR * Math.sin(ta);
+        const oz = tubeR * (Math.cos(ta) * nz);
+        push(pos, cx + ox, y + oy, cz + oz);
       }
     }
   }
 
-  const rungCount = Math.floor(turns * 10);
-  const rungSamples = Math.max(4, Math.floor((count - pos.length / 3) / rungCount));
+  const rungCount = Math.floor(turns * 9);
+  const rungSamples = Math.max(6, Math.floor((count - pos.length / 3) / rungCount));
   for (let r = 0; r < rungCount && pos.length / 3 < count; r++) {
-    const t = r / Math.max(1, rungCount - 1);
+    const t = (r + 0.5) / rungCount;
     const a1 = t * Math.PI * 2 * turns;
     const y = (t - 0.5) * height;
-    const x1 = radius * Math.cos(a1), z1 = radius * Math.sin(a1);
-    const x2 = radius * Math.cos(a1 + Math.PI), z2 = radius * Math.sin(a1 + Math.PI);
-    for (let s = 0; s <= rungSamples; s++) {
-      const f = s / rungSamples;
+    const x1 = radius * Math.cos(a1);
+    const z1 = radius * Math.sin(a1);
+    const x2 = radius * Math.cos(a1 + Math.PI);
+    const z2 = radius * Math.sin(a1 + Math.PI);
+    for (let s = 0; s < rungSamples; s++) {
+      const f = s / Math.max(1, rungSamples - 1);
       push(pos, x1 + (x2 - x1) * f, y, z1 + (z2 - z1) * f);
       if (pos.length / 3 >= count) break;
     }
   }
-  return pos.slice(0, count * 3);
+  return padToCount(pos, count);
 }
 
-function generateDiamond(count, size = 1.6 * S()) {
+function generateDiamond(count) {
   const pos = [];
-  const top = [0, size, 0];
-  const bot = [0, -size * 0.55, 0];
+  const size = 1.58 * S();
+  const top = [0, size * 1.02, 0];
+  const bot = [0, -size * 0.78, 0];
   const eq = [0, 1, 2, 3].map((i) => {
-    const a = (i / 4) * Math.PI * 2;
-    return [size * 0.85 * Math.cos(a), 0, size * 0.85 * Math.sin(a)];
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    return [size * 0.78 * Math.cos(a), 0.08 * size, size * 0.78 * Math.sin(a)];
   });
+
   const edges = [];
   eq.forEach((v) => edges.push([top, v]));
   eq.forEach((v) => edges.push([bot, v]));
   for (let i = 0; i < 4; i++) edges.push([eq[i], eq[(i + 1) % 4]]);
 
-  const facetCount = Math.floor(count * 0.1);
-  const perEdge = Math.floor((count - facetCount) / edges.length);
-  const jitter = 0.008 * S();
+  const edgeShare = Math.floor(count * 0.72);
+  const perEdge = Math.floor(edgeShare / edges.length);
+  for (const [a, b] of edges) addEdge(pos, a, b, perEdge);
 
-  for (const [a, b] of edges) {
-    for (let i = 0; i < perEdge; i++) {
-      const t = i / Math.max(1, perEdge - 1);
+  const verts = [top, bot, ...eq];
+  const vertShare = Math.floor(count * 0.1);
+  const perVert = Math.floor(vertShare / verts.length);
+  for (const v of verts) {
+    for (let i = 0; i < perVert; i++) push(pos, v[0], v[1], v[2]);
+  }
+
+  const faces = [];
+  for (let i = 0; i < 4; i++) {
+    faces.push([top, eq[i], eq[(i + 1) % 4]]);
+    faces.push([bot, eq[i], eq[(i + 1) % 4]]);
+  }
+  const faceShare = count - Math.floor(pos.length / 3);
+  const perFace = Math.floor(faceShare / faces.length);
+  for (const [a, b, c] of faces) {
+    for (let i = 0; i < perFace; i++) {
+      const u = (i % 12) / 12 * 0.22;
+      const v = Math.floor(i / 12) / Math.max(1, Math.ceil(perFace / 12)) * 0.22;
+      const w = 1 - u - v;
       push(pos,
-        a[0] + (b[0] - a[0]) * t + (Math.random() - 0.5) * jitter,
-        a[1] + (b[1] - a[1]) * t + (Math.random() - 0.5) * jitter,
-        a[2] + (b[2] - a[2]) * t + (Math.random() - 0.5) * jitter
+        a[0] * w + b[0] * u + c[0] * v,
+        a[1] * w + b[1] * u + c[1] * v,
+        a[2] * w + b[2] * u + c[2] * v
       );
     }
   }
-  [top, bot, ...eq].forEach((v, i) => { if (i < facetCount) push(pos, v[0], v[1], v[2]); });
-  return pos.slice(0, count * 3);
+  return padToCount(pos, count);
 }
 
 const SHAPE_GENERATORS = {
@@ -449,11 +532,13 @@ function detectGesture(landmarks) {
 let currentGesture = 'open_palm';
 let currentShape = 'sphere';
 let handPresent = false;
-let currentColor = new THREE.Color(0x33bbff);
-let targetColor = new THREE.Color(0x33bbff);
+let currentColor = new THREE.Color(0x8eb8ff);
+let targetColor = new THREE.Color(0x8eb8ff);
 
 const objectPosition = new THREE.Vector3(0, 0, 0);
 const targetObjectPos = new THREE.Vector3(0, 0, 0);
+const smoothedTargetPos = new THREE.Vector3(0, 0, 0);
+const objectVelocity = new THREE.Vector3(0, 0, 0);
 const rotationVelocity = new THREE.Vector2(0, 0);
 const targetRotationVel = new THREE.Vector2(0, 0);
 
@@ -487,7 +572,12 @@ function setGesture(gesture) {
   applyShape(config.shape);
 
   const el = document.getElementById('gesture-name');
-  if (el) el.textContent = config.name;
+  if (el) {
+    el.textContent = config.name;
+    el.classList.remove('pop');
+    void el.offsetWidth;
+    el.classList.add('pop');
+  }
 
   document.querySelectorAll('.guide-item').forEach((e) => e.classList.remove('active'));
   const activeItem = document.querySelector(`[data-gesture="${gesture}"]`);
@@ -530,7 +620,11 @@ function processHandInteraction(landmarksList) {
   }
 
   const world = handNormToWorld(palmX, palmY, hs);
-  targetObjectPos.set(world.x, world.y, 0);
+  const jumpX = world.x - targetObjectPos.x;
+  const jumpY = world.y - targetObjectPos.y;
+  if (jumpX * jumpX + jumpY * jumpY > TARGET_DEADZONE * TARGET_DEADZONE) {
+    targetObjectPos.set(world.x, world.y, 0);
+  }
 
   const center = { x: palmX, y: palmY };
   if (lastHandCenter) {
@@ -702,7 +796,12 @@ function animate(timestamp) {
     targetScale = viewport.scaleFactor * userScaleMultiplier * breathe;
   }
 
-  objectPosition.lerp(targetObjectPos, POSITION_LERP);
+  smoothedTargetPos.lerp(targetObjectPos, HAND_FILTER);
+  objectVelocity.x += (smoothedTargetPos.x - objectPosition.x) * POS_STIFFNESS;
+  objectVelocity.y += (smoothedTargetPos.y - objectPosition.y) * POS_STIFFNESS;
+  objectVelocity.z += (smoothedTargetPos.z - objectPosition.z) * POS_STIFFNESS;
+  objectVelocity.multiplyScalar(POS_DAMP);
+  objectPosition.add(objectVelocity);
   sculptureGroup.position.copy(objectPosition);
   currentColor.lerp(targetColor, COLOR_LERP);
 
@@ -716,7 +815,7 @@ function animate(timestamp) {
   const isHelix = currentShape === 'helix';
   const isHeart = currentShape === 'heart';
   const isSaturn = currentShape === 'saturn';
-  const noiseAmp = isHelix ? 0.004 : 0.005;
+  const noiseAmp = isHelix ? 0.0018 : 0.0022;
 
   for (let i = 0; i < PARTICLE_COUNT; i++) {
     const i3 = i * 3;
@@ -742,13 +841,20 @@ function animate(timestamp) {
       tz += flow * Math.sin(phase);
     }
 
-    const nx = Math.sin(idlePhase * 0.7 + seed) * noiseAmp;
-    const ny = Math.cos(idlePhase * 0.55 + seed1) * noiseAmp;
-    const nz = Math.sin(idlePhase * 0.6 + seed2) * noiseAmp;
+    const nx = Math.sin(idlePhase * 0.55 + seed) * noiseAmp;
+    const ny = Math.cos(idlePhase * 0.42 + seed1) * noiseAmp;
+    const nz = Math.sin(idlePhase * 0.48 + seed2) * noiseAmp;
 
-    positions[i3]     += (tx - positions[i3])     * MORPH_LERP + nx;
-    positions[i3 + 1] += (ty - positions[i3 + 1]) * MORPH_LERP + ny;
-    positions[i3 + 2] += (tz - positions[i3 + 2]) * MORPH_LERP + nz;
+    morphVelocity[i3]     += (tx - positions[i3])     * MORPH_STIFF;
+    morphVelocity[i3 + 1] += (ty - positions[i3 + 1]) * MORPH_STIFF;
+    morphVelocity[i3 + 2] += (tz - positions[i3 + 2]) * MORPH_STIFF;
+    morphVelocity[i3]     *= MORPH_DAMP;
+    morphVelocity[i3 + 1] *= MORPH_DAMP;
+    morphVelocity[i3 + 2] *= MORPH_DAMP;
+
+    positions[i3]     += morphVelocity[i3]     + nx;
+    positions[i3 + 1] += morphVelocity[i3 + 1] + ny;
+    positions[i3 + 2] += morphVelocity[i3 + 2] + nz;
 
     let brightness = 0.9 + Math.sin(idlePhase * 1.0 + seed) * 0.08;
     let cr = currentColor.r, cg = currentColor.g, cb = currentColor.b;
@@ -811,7 +917,7 @@ function animate(timestamp) {
     3
   );
   pointLight1.color.copy(currentColor);
-  pointLight1.intensity = isHeart ? 5.5 : isSaturn ? 5.2 : 4.5;
+  pointLight1.intensity = isHeart ? 4.2 : isSaturn ? 4.0 : 3.6;
 
   renderer.render(scene, camera);
 }
