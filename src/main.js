@@ -25,11 +25,11 @@ const TARGET_DEADZONE = 0.018;
 
 const GESTURE_CONFIG = {
   open_palm:  { name: 'Sphere',   color: new THREE.Color(0x8eb8ff), shape: 'sphere'  },
-  fist:       { name: 'Cube',     color: new THREE.Color(0xff9a78), shape: 'cube'    },
+  fist:       { name: 'Butterfly',     color: new THREE.Color(0xff9a78), shape: 'butterfly'    },
   pinch:      { name: 'Heart',    color: new THREE.Color(0xf3a8c8), shape: 'heart'   },
   peace:      { name: 'Saturn',   color: new THREE.Color(0xc4b0ff), shape: 'saturn'  },
   pointing:   { name: 'Helix',    color: new THREE.Color(0x8fd6c8), shape: 'helix'   },
-  thumbs_up:  { name: 'Diamond',  color: new THREE.Color(0xffd89a), shape: 'diamond' },
+  thumbs_up:  { name: 'Cat',  color: new THREE.Color(0xffd89a), shape: 'cat' },
 };
 
 const viewport = {
@@ -210,6 +210,14 @@ function addFibonacciSphere(pos, count, radius) {
   }
 }
 
+function addFibonacciDisk(pos, count, radius, cx = 0, cy = 0, z = 0) {
+  for (let i = 0; i < count; i++) {
+    const r = radius * Math.sqrt((i + 0.5) / Math.max(1, count));
+    const theta = GOLDEN_ANGLE * i;
+    push(pos, cx + r * Math.cos(theta), cy + r * Math.sin(theta), z);
+  }
+}
+
 function addCircle(pos, count, radius, y, tiltX = 0) {
   const c = Math.cos(tiltX);
   const s = Math.sin(tiltX);
@@ -267,6 +275,42 @@ function heartSamples(n) {
   return out;
 }
 
+// Fay's butterfly curve: r = e^sin(t) - 2cos(4t) + sin^5((2t-π)/24)
+function butterflyCurve2D(t) {
+  const r =
+    Math.exp(Math.sin(t)) -
+    2 * Math.cos(4 * t) +
+    Math.pow(Math.sin((2 * t - Math.PI) / 24), 5);
+  return [Math.sin(t) * r, Math.cos(t) * r];
+}
+
+function butterflySamples(n) {
+  const tMax = 24 * Math.PI;
+  const steps = Math.max(64, n * 5);
+  let length = 0;
+  let prev = butterflyCurve2D(0);
+  const pts = [{ t: 0, x: prev[0], y: prev[1], len: 0 }];
+  for (let i = 1; i <= steps; i++) {
+    const t = (i / steps) * tMax;
+    const [x, y] = butterflyCurve2D(t);
+    length += Math.hypot(x - prev[0], y - prev[1]);
+    pts.push({ t, x, y, len: length });
+    prev = [x, y];
+  }
+  const out = [];
+  let j = 1;
+  for (let i = 0; i < n; i++) {
+    const target = (i / n) * length;
+    while (j < pts.length && pts[j].len < target) j++;
+    const a = pts[j - 1];
+    const b = pts[Math.min(j, pts.length - 1)];
+    const span = b.len - a.len || 1;
+    const f = (target - a.len) / span;
+    out.push([a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f]);
+  }
+  return out;
+}
+
 // ────────────────────────────────────────────────────────────
 //  5. SHAPE GENERATORS
 // ────────────────────────────────────────────────────────────
@@ -289,26 +333,50 @@ function generateSphere(count) {
   return padToCount(pos, count);
 }
 
-function generateCube(count) {
+function generateButterfly(count) {
   const pos = [];
-  const half = 1.38 * S();
-  const corners = [
-    [-half, -half, -half], [half, -half, -half], [half, -half, half], [-half, -half, half],
-    [-half,  half, -half], [half,  half, -half], [half,  half, half], [-half,  half, half],
-  ];
-  const edges = [
-    [0, 1], [1, 2], [2, 3], [3, 0],
-    [4, 5], [5, 6], [6, 7], [7, 4],
-    [0, 4], [1, 5], [2, 6], [3, 7],
+  const scale = 0.3 * S();
+
+  const outlineLayers = [
+    { inset: 1.00, z: 0.00, n: 0.40 },
+    { inset: 0.95, z: 0.07, n: 0.14 },
+    { inset: 0.95, z: -0.07, n: 0.14 },
+    { inset: 0.88, z: 0.13, n: 0.08 },
+    { inset: 0.88, z: -0.13, n: 0.08 },
   ];
 
-  const cornerCount = Math.floor(count * 0.08);
-  const perCorner = Math.floor(cornerCount / 8);
-  const perEdge = Math.floor((count - perCorner * 8) / edges.length);
+  let used = 0;
+  for (const layer of outlineLayers) {
+    const n = Math.floor(count * layer.n);
+    const pts = butterflySamples(n);
+    for (const [x, y] of pts) {
+      push(pos, x * scale * layer.inset, y * scale * layer.inset, layer.z * S());
+    }
+    used += n;
+  }
 
-  for (const [ia, ib] of edges) addEdge(pos, corners[ia], corners[ib], perEdge);
-  for (const c of corners) {
-    for (let i = 0; i < perCorner; i++) push(pos, c[0], c[1], c[2]);
+  // body (down the pinched middle of the curve) + antennae
+  const bodyCount = Math.floor(count * 0.05);
+  const bodyTop = [0, 1.55 * scale, 0];
+  const bodyBottom = [0, -1.35 * scale, 0];
+  addEdge(pos, bodyTop, bodyBottom, bodyCount);
+  used += bodyCount;
+
+  const antennaCount = Math.floor(count * 0.02);
+  const perAntenna = Math.max(1, Math.floor(antennaCount / 2));
+  addEdge(pos, bodyTop, [0.35 * scale, 2.15 * scale, 0], perAntenna);
+  addEdge(pos, bodyTop, [-0.35 * scale, 2.15 * scale, 0], perAntenna);
+  used += perAntenna * 2;
+
+  // scattered inner-wing fill for volume
+  const fillCount = Math.max(0, count - used);
+  if (fillCount > 0) {
+    const fillPts = butterflySamples(fillCount);
+    for (let i = 0; i < fillCount; i++) {
+      const inset = 0.25 + (i % 8) / 8 * 0.55;
+      const z = ((i % 5) - 2) * 0.03 * S();
+      push(pos, fillPts[i][0] * scale * inset, fillPts[i][1] * scale * inset, z);
+    }
   }
   return padToCount(pos, count);
 }
@@ -435,61 +503,89 @@ function generateDoubleHelix(count) {
   return padToCount(pos, count);
 }
 
-function generateDiamond(count) {
+function generateCat(count) {
   const pos = [];
-  const size = 1.58 * S();
-  const top = [0, size * 1.02, 0];
-  const bot = [0, -size * 0.78, 0];
-  const eq = [0, 1, 2, 3].map((i) => {
-    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-    return [size * 0.78 * Math.cos(a), 0.08 * size, size * 0.78 * Math.sin(a)];
-  });
+  const s = S();
+  const headR = 1.05 * s;
+  const headCy = -0.05 * s;
 
-  const edges = [];
-  eq.forEach((v) => edges.push([top, v]));
-  eq.forEach((v) => edges.push([bot, v]));
-  for (let i = 0; i < 4; i++) edges.push([eq[i], eq[(i + 1) % 4]]);
+  // head fill
+  const headFillCount = Math.floor(count * 0.36);
+  addFibonacciDisk(pos, headFillCount, headR, 0, headCy, 0);
 
-  const edgeShare = Math.floor(count * 0.72);
-  const perEdge = Math.floor(edgeShare / edges.length);
-  for (const [a, b] of edges) addEdge(pos, a, b, perEdge);
-
-  const verts = [top, bot, ...eq];
-  const vertShare = Math.floor(count * 0.1);
-  const perVert = Math.floor(vertShare / verts.length);
-  for (const v of verts) {
-    for (let i = 0; i < perVert; i++) push(pos, v[0], v[1], v[2]);
+  // head outline
+  const headOutlineCount = Math.floor(count * 0.12);
+  for (let i = 0; i < headOutlineCount; i++) {
+    const a = (i / headOutlineCount) * Math.PI * 2;
+    push(pos, headR * Math.cos(a), headCy + headR * Math.sin(a), 0.02 * s);
   }
 
-  const faces = [];
-  for (let i = 0; i < 4; i++) {
-    faces.push([top, eq[i], eq[(i + 1) % 4]]);
-    faces.push([bot, eq[i], eq[(i + 1) % 4]]);
+  // ears (two triangles)
+  const earSize = 0.55 * s;
+  const earBaseY = headCy + headR * 0.72;
+  const leftEarTip   = [-0.62 * s, earBaseY + earSize, 0];
+  const leftEarBaseA = [-0.95 * s, earBaseY, 0];
+  const leftEarBaseB = [-0.25 * s, earBaseY, 0];
+  const rightEarTip   = [0.62 * s, earBaseY + earSize, 0];
+  const rightEarBaseA = [0.95 * s, earBaseY, 0];
+  const rightEarBaseB = [0.25 * s, earBaseY, 0];
+
+  const earShare = Math.floor(count * 0.14);
+  const perEarEdge = Math.floor(earShare / 6);
+  addEdge(pos, leftEarTip, leftEarBaseA, perEarEdge);
+  addEdge(pos, leftEarTip, leftEarBaseB, perEarEdge);
+  addEdge(pos, leftEarBaseA, leftEarBaseB, perEarEdge);
+  addEdge(pos, rightEarTip, rightEarBaseA, perEarEdge);
+  addEdge(pos, rightEarTip, rightEarBaseB, perEarEdge);
+  addEdge(pos, rightEarBaseA, rightEarBaseB, perEarEdge);
+
+  // eyes (two small filled dots)
+  const eyeR = 0.12 * s;
+  const eyeY = headCy + 0.12 * s;
+  const eyeCount = Math.floor(count * 0.06);
+  const perEye = Math.max(1, Math.floor(eyeCount / 2));
+  addFibonacciDisk(pos, perEye, eyeR, -0.38 * s, eyeY, 0.05 * s);
+  addFibonacciDisk(pos, perEye, eyeR, 0.38 * s, eyeY, 0.05 * s);
+
+  // nose (small triangle)
+  const noseTop = [0, headCy - 0.08 * s, 0.05 * s];
+  const noseL = [-0.07 * s, headCy - 0.2 * s, 0.05 * s];
+  const noseR = [0.07 * s, headCy - 0.2 * s, 0.05 * s];
+  const noseShare = Math.floor(count * 0.03);
+  const perNose = Math.max(1, Math.floor(noseShare / 3));
+  addEdge(pos, noseTop, noseL, perNose);
+  addEdge(pos, noseTop, noseR, perNose);
+  addEdge(pos, noseL, noseR, perNose);
+
+  // mouth (simple W)
+  const mouthCenter = [0, headCy - 0.28 * s, 0.03 * s];
+  const mouthL = [-0.22 * s, headCy - 0.18 * s, 0.03 * s];
+  const mouthR = [0.22 * s, headCy - 0.18 * s, 0.03 * s];
+  const mouthShare = Math.floor(count * 0.04);
+  const perMouth = Math.max(1, Math.floor(mouthShare / 2));
+  addEdge(pos, mouthL, mouthCenter, perMouth);
+  addEdge(pos, mouthCenter, mouthR, perMouth);
+
+  // whiskers (3 per side), using whatever budget remains
+  const whiskersPerSide = 3;
+  const whiskerShare = Math.max(0, count - Math.floor(pos.length / 3));
+  const perWhisker = Math.max(1, Math.floor(whiskerShare / (whiskersPerSide * 2)));
+  const whiskerY = [headCy - 0.02 * s, headCy - 0.08 * s, headCy - 0.14 * s];
+  for (let w = 0; w < whiskersPerSide; w++) {
+    addEdge(pos, [-0.15 * s, whiskerY[w], 0.01 * s], [-1.15 * s, whiskerY[w] - 0.03 * s, 0.01 * s], perWhisker);
+    addEdge(pos, [0.15 * s, whiskerY[w], 0.01 * s], [1.15 * s, whiskerY[w] - 0.03 * s, 0.01 * s], perWhisker);
   }
-  const faceShare = count - Math.floor(pos.length / 3);
-  const perFace = Math.floor(faceShare / faces.length);
-  for (const [a, b, c] of faces) {
-    for (let i = 0; i < perFace; i++) {
-      const u = (i % 12) / 12 * 0.22;
-      const v = Math.floor(i / 12) / Math.max(1, Math.ceil(perFace / 12)) * 0.22;
-      const w = 1 - u - v;
-      push(pos,
-        a[0] * w + b[0] * u + c[0] * v,
-        a[1] * w + b[1] * u + c[1] * v,
-        a[2] * w + b[2] * u + c[2] * v
-      );
-    }
-  }
+
   return padToCount(pos, count);
 }
 
 const SHAPE_GENERATORS = {
   sphere: () => generateSphere(PARTICLE_COUNT),
-  cube: () => generateCube(PARTICLE_COUNT),
+  butterfly: () => generateButterfly(PARTICLE_COUNT),
   heart: () => generateHeart(PARTICLE_COUNT),
   saturn: () => generateSaturn(PARTICLE_COUNT),
   helix: () => generateDoubleHelix(PARTICLE_COUNT),
-  diamond: () => generateDiamond(PARTICLE_COUNT),
+  cat: () => generateCat(PARTICLE_COUNT),
 };
 
 // ────────────────────────────────────────────────────────────
